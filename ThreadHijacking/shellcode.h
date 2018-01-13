@@ -1,7 +1,5 @@
 #pragma once
-#include <iostream>
-#include <windows.h>
-#include <tlhelp32.h>
+
 //shellcode from nico's book
 BYTE shellcode[26] = {
 	0x60, //PUSHAD
